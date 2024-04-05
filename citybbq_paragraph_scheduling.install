@@ -1,0 +1,70 @@
+<?php
+
+use Drupal\field\Entity\FieldStorageConfig;
+use Drupal\field\Entity\FieldConfig;
+
+/**
+ * Implements hook_install().
+ */
+function citybbq_paragraph_scheduling_install() {
+  // Grant permissions to the administrator role.
+  _citybbq_paragraph_scheduling_grant_admin_permissions();
+
+  // Define field storages.
+  $fields = [
+    'paragraph_item_publish_time' => 'datetime',
+    'paragraph_item_unpublish_time' => 'datetime',
+    'paragraph_item_is_visible' => 'boolean',
+  ];
+
+  foreach ($fields as $field_name => $field_type) {
+    if (!FieldStorageConfig::loadByName('paragraph', $field_name)) {
+      FieldStorageConfig::create([
+        'field_name' => $field_name,
+        'entity_type' => 'paragraph',
+        'type' => $field_type,
+      ])->save();
+    }
+  }
+
+  // Attach fields to all paragraph bundles.
+  $paragraph_bundles = \Drupal::service('entity_type.bundle.info')->getBundleInfo('paragraph');
+
+  foreach (array_keys($paragraph_bundles) as $bundle) {
+    foreach ($fields as $field_name => $field_type) {
+      if (!FieldConfig::loadByName('paragraph', $bundle, $field_name)) {
+        FieldConfig::create([
+          'field_name' => $field_name,
+          'entity_type' => 'paragraph',
+          'bundle' => $bundle,
+          'label' => ucfirst(str_replace('_', ' ', $field_name)),
+          'required' => FALSE,
+        ])->save();
+      }
+    }
+  }
+}
+
+/**
+ * Grant permissions to the administrator role.
+ */
+function _citybbq_paragraph_scheduling_grant_admin_permissions() {
+    $role = \Drupal\user\Entity\Role::load('administrator');
+    if ($role) {
+      $role->grantPermission('administer citybbq paragraph scheduling');
+      $role->save();
+    }
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function citybbq_paragraph_scheduling_uninstall() {
+  $fields = ['paragraph_item_publish_time', 'paragraph_item_unpublish_time', 'paragraph_item_is_visible'];
+
+  foreach ($fields as $field_name) {
+    if ($field_storage = FieldStorageConfig::loadByName('paragraph', $field_name)) {
+      $field_storage->delete();
+    }
+  }
+}

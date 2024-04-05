@@ -1,0 +1,165 @@
+<?php
+
+use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Datetime\DrupalDateTime;
+use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\paragraphs\Entity\Paragraph;
+use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Session\AccountInterface;
+
+/**
+ * Implements hook_cron().
+ */
+
+function citybbq_paragraph_scheduling_cron()
+{
+  \Drupal::logger('citybbq_paragraph_scheduling')->notice('Scheduling cron fired');
+
+  $enabled_types = \Drupal::config('citybbq_paragraph_scheduling.settings')->get('enabled_paragraph_types');
+  if (empty($enabled_types)) {
+    return; // Exit if no types are enabled.
+  }
+
+  $current_time = \Drupal::time()->getCurrentTime();
+  foreach ($enabled_types as $type) {
+    // Start building the query.
+    $query = \Drupal::entityQuery('paragraph')
+      ->condition('type', $type)
+      ->condition('status', 1); // Ensure only active paragraphs are selected.
+
+    // Add condition groups for publish and unpublish times.
+    $orGroup = $query->orConditionGroup()
+      ->exists('paragraph_item_publish_time')
+      ->exists('paragraph_item_unpublish_time');
+
+    // Apply the condition group to the query.
+    $query->condition($orGroup);
+
+    // Execute the query to get paragraph IDs.
+    $ids = $query->execute();
+
+    if (!empty($ids)) {
+      $paragraphs = \Drupal\paragraphs\Entity\Paragraph::loadMultiple($ids);
+      foreach ($paragraphs as $paragraph) {
+        $should_be_visible = TRUE; // Assume visibility is true by default.
+
+        // Check publish time.
+        if ($paragraph->hasField('paragraph_item_publish_time') && !$paragraph->get('paragraph_item_publish_time')->isEmpty()) {
+          $publish_time = $paragraph->get('paragraph_item_publish_time')->date->getTimestamp();
+          if ($current_time < $publish_time) {
+            $should_be_visible = FALSE;
+          }
+        }
+
+        // Check unpublish time.
+        if ($paragraph->hasField('paragraph_item_unpublish_time') && !$paragraph->get('paragraph_item_unpublish_time')->isEmpty()) {
+          $unpublish_time = $paragraph->get('paragraph_item_unpublish_time')->date->getTimestamp();
+          if ($current_time > $unpublish_time) {
+            $should_be_visible = FALSE;
+          }
+        }
+
+        // Update visibility if necessary.
+        $current_visibility = $paragraph->get('paragraph_item_is_visible')->value;
+        if ($should_be_visible !== (bool)$current_visibility) {
+          $paragraph->set('paragraph_item_is_visible', $should_be_visible);
+          $paragraph->save();
+          \Drupal::logger('citybbq_paragraph_scheduling')->notice(sprintf('Paragraph ID: %d visibility updated to: %s', $paragraph->id(), $should_be_visible ? 'TRUE' : 'FALSE'));
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_help().
+ */
+function citybbq_paragraph_scheduling_help($route_name, $route_match)
+{
+  if ($route_name == 'help.page.citybbq_paragraph_scheduling') {
+    return \Drupal::translation()->translate('Help text about CityBBQ Paragraph Scheduling Module.');
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for paragraph entities.
+ */
+function citybbq_paragraph_scheduling_paragraph_presave(\Drupal\paragraphs\Entity\Paragraph $paragraph)
+{
+  $enabled_types = \Drupal::config('citybbq_paragraph_scheduling.settings')->get('enabled_paragraph_types');
+
+  if (in_array($paragraph->bundle(), array_filter($enabled_types))) {
+    $should_be_visible = TRUE; // Default visibility
+
+    // Publish Time Check
+    if ($paragraph->hasField('paragraph_item_publish_time') && !$paragraph->get('paragraph_item_publish_time')->isEmpty()) {
+      $publish_time = $paragraph->get('paragraph_item_publish_time')->date->getTimestamp();
+      $current_time = \Drupal::time()->getRequestTime();
+
+      if ($publish_time > $current_time) {
+        $should_be_visible = FALSE;
+      }
+    }
+
+    // Unpublish Time Check
+    if ($paragraph->hasField('paragraph_item_unpublish_time') && !$paragraph->get('paragraph_item_unpublish_time')->isEmpty()) {
+      $unpublish_time = $paragraph->get('paragraph_item_unpublish_time')->date->getTimestamp();
+      $current_time = \Drupal::time()->getRequestTime();
+
+      if ($unpublish_time <= $current_time) {
+        $should_be_visible = FALSE;
+      }
+    }
+
+    // Update visibility
+    if ($paragraph->hasField('paragraph_item_is_visible')) {
+      $paragraph->set('paragraph_item_is_visible', $should_be_visible);
+    }
+  }
+}
+
+
+/**
+ * Implements hook_entity_access().
+ */
+
+function citybbq_paragraph_scheduling_entity_access(\Drupal\Core\Entity\EntityInterface $entity, $operation, AccountInterface $account)
+{
+  if ($entity instanceof Paragraph && $operation === 'view') {
+    $current_time = \Drupal::time()->getCurrentTime();
+
+    // Apply the logic only to enabled paragraph types.
+    $enabled_types = \Drupal::config('citybbq_paragraph_scheduling.settings')->get('enabled_paragraph_types');
+    if (in_array($entity->bundle(), $enabled_types)) {
+
+      // Check if the paragraph has a future publish date.
+      if ($entity->hasField('paragraph_item_publish_time') && !$entity->get('paragraph_item_publish_time')->isEmpty()) {
+        $publish_date = $entity->get('paragraph_item_publish_time')->date;
+
+        if ($publish_date && $publish_date->getTimestamp() > $current_time) {
+          // Deny access if the publish date is in the future.
+          return AccessResult::forbidden();
+        }
+      }
+
+      // Additionally, check the paragraph_item_is_visible field.
+      if ($entity->hasField('paragraph_item_is_visible') && !$entity->get('paragraph_item_is_visible')->value) {
+        // Deny access if the paragraph is set to be not visible.
+        return AccessResult::forbidden();
+      }
+
+      // Check the unpublish time.
+      if ($entity->hasField('paragraph_item_unpublish_time') && !$entity->get('paragraph_item_unpublish_time')->isEmpty()) {
+        $unpublish_date = $entity->get('paragraph_item_unpublish_time')->date;
+
+        if ($unpublish_date && $current_time > $unpublish_date->getTimestamp()) {
+          // Deny access if current time is past the unpublish time.
+          return AccessResult::forbidden();
+        }
+      }
+    }
+  }
+
+  // Default to neutral, allowing other access checks to decide.
+  return AccessResult::neutral();
+}

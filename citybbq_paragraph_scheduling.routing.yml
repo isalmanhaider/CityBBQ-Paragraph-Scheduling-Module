@@ -1,0 +1,7 @@
+citybbq_paragraph_scheduling.admin_settings:
+  path: '/admin/config/content/citybbq-paragraph-scheduling'
+  defaults:
+    _form: '\Drupal\citybbq_paragraph_scheduling\Form\CityBBQParagraphSchedulingConfigForm'
+    _title: 'CityBBQ Paragraph Scheduling'
+  requirements:
+    _permission: 'administer citybbq paragraph scheduling'

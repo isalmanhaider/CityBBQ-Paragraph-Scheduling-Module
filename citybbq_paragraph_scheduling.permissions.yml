@@ -1,0 +1,4 @@
+administer citybbq paragraph scheduling:
+  title: 'Administer CityBBQ Paragraph Scheduling'
+  description: 'Allows administering which paragraph types have scheduling.'
+  restrict access: TRUE
